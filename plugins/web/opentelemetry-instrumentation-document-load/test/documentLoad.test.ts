@@ -14,12 +14,7 @@
  * limitations under the License.
  */
 
-import {
-  context,
-  HrTime,
-  propagation,
-  SpanAttributes,
-} from '@opentelemetry/api';
+import { context, HrTime, propagation, Attributes } from '@opentelemetry/api';
 import {
   W3CTraceContextPropagator,
   TRACE_PARENT_HEADER,
@@ -47,6 +42,8 @@ const spanProcessor = new SimpleSpanProcessor(exporter);
 
 provider.addSpanProcessor(spanProcessor);
 provider.register();
+
+const BAGGAGE_HEADER = 'baggage';
 
 const resources = [
   {
@@ -380,7 +377,7 @@ describe('DocumentLoad Instrumentation', () => {
     describe('AND window has information about server root span', () => {
       let spyGetElementsByTagName: any;
       beforeEach(() => {
-        const element = {
+        const traceParentElement = {
           content: '00-ab42124a3c573678d4d8b21ba52df3bf-d21f7bc17caa5aba-01',
           getAttribute: (value: string) => {
             if (value === 'name') {
@@ -394,7 +391,7 @@ describe('DocumentLoad Instrumentation', () => {
           window.document,
           'getElementsByTagName'
         );
-        spyGetElementsByTagName.withArgs('meta').returns([element]);
+        spyGetElementsByTagName.withArgs('meta').returns([traceParentElement]);
       });
       afterEach(() => {
         spyGetElementsByTagName.restore();
@@ -407,7 +404,6 @@ describe('DocumentLoad Instrumentation', () => {
           const fetchSpan = exporter.getFinishedSpans()[1] as ReadableSpan;
           assert.strictEqual(rootSpan.name, 'documentFetch');
           assert.strictEqual(fetchSpan.name, 'documentLoad');
-
           assert.strictEqual(
             rootSpan.spanContext().traceId,
             'ab42124a3c573678d4d8b21ba52df3bf'
@@ -418,6 +414,42 @@ describe('DocumentLoad Instrumentation', () => {
           );
 
           assert.strictEqual(exporter.getFinishedSpans().length, 2);
+          done();
+        }, 100);
+      });
+    });
+
+    describe('AND the window has baggage entries', () => {
+      let spyGetElementsByTagName: any;
+      beforeEach(() => {
+        const baggageElement = {
+          content: 'key1=test,key2=test2',
+          getAttribute: (value: string) => {
+            if (value === 'name') {
+              return BAGGAGE_HEADER;
+            }
+            return { undefined };
+          },
+        };
+
+        spyGetElementsByTagName = sandbox.stub(
+          window.document,
+          'getElementsByTagName'
+        );
+        spyGetElementsByTagName.withArgs('meta').returns([baggageElement]);
+      });
+      afterEach(() => {
+        spyGetElementsByTagName.restore();
+      });
+      it('should extract baggage entries and create baggage on the active context', done => {
+        plugin.enable();
+
+        setTimeout(() => {
+          //Logs undefined as the Trace/context is finished by the time we check for its baggage.
+          console.log(
+            'From Test: ',
+            propagation.getActiveBaggage()?.getAllEntries()
+          );
           done();
         }, 100);
       });
@@ -664,5 +696,5 @@ interface TimedEvent {
   /** The name of the event. */
   name: string;
   /** The attributes of the event. */
-  attributes?: SpanAttributes;
+  attributes?: Attributes;
 }
