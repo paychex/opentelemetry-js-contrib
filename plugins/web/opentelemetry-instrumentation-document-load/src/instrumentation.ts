@@ -19,7 +19,7 @@ import {
   propagation,
   trace,
   Span,
-  ROOT_CONTEXT,
+  //ROOT_CONTEXT,
 } from '@opentelemetry/api';
 import { otperformance, TRACE_PARENT_HEADER } from '@opentelemetry/core';
 import {
@@ -48,9 +48,6 @@ export class DocumentLoadInstrumentation extends InstrumentationBase<unknown> {
   readonly component: string = 'document-load';
   readonly version: string = '1';
   moduleName = this.component;
-
-  //TODO: Update W3CBaggagePropagator to export Baggage Header constant.
-  BAGGAGE_HEADER = 'baggage';
 
   /**
    *
@@ -92,82 +89,66 @@ export class DocumentLoadInstrumentation extends InstrumentationBase<unknown> {
    * Collects information about performance and creates appropriate spans
    */
   private _collectPerformance() {
-    const traceParentMetaElement = Array.from(
-      document.getElementsByTagName('meta')
-    ).find(e => e.getAttribute('name') === TRACE_PARENT_HEADER);
-
-    const baggageMetaElement = Array.from(
-      document.getElementsByTagName('meta')
-    ).find(e => e.getAttribute('name') === this.BAGGAGE_HEADER);
-
+    const metaElement = Array.from(document.getElementsByTagName('meta')).find(
+      e => e.getAttribute('name') === TRACE_PARENT_HEADER
+    );
+    const baggageElement = Array.from(document.getElementsByTagName('meta')).find(
+      e => e.getAttribute('name') === 'baggage'
+    );
     const entries = getPerformanceNavigationEntries();
-    const traceparent =
-      (traceParentMetaElement && traceParentMetaElement.content) || '';
-    const baggage = (baggageMetaElement && baggageMetaElement.content) || '';
-    context.with(
-      propagation.extract(ROOT_CONTEXT, {
-        traceparent,
-        baggage,
-      }),
-      () => {
-        //During a test run, this will correctly log the extracted baggage.
-        console.log(
-          'From code: ',
-          propagation.getActiveBaggage()?.getAllEntries()
-        );
-        const rootSpan = this._startSpan(
-          AttributeNames.DOCUMENT_LOAD,
+    const traceparent = (metaElement && metaElement.content) || '';
+    const baggage = (baggageElement && baggageElement.content) || '';
+    
+    context.with(propagation.extract(context.active(), { traceparent,baggage }), () => {
+      const rootSpan = this._startSpan(
+        AttributeNames.DOCUMENT_LOAD,
+        PTN.FETCH_START,
+        entries
+      );
+      if (!rootSpan) {
+        return;
+      }
+      context.with(trace.setSpan(context.active(), rootSpan), () => {
+        const fetchSpan = this._startSpan(
+          AttributeNames.DOCUMENT_FETCH,
           PTN.FETCH_START,
           entries
         );
-        if (!rootSpan) {
-          return;
+        if (fetchSpan) {
+          fetchSpan.setAttribute(SemanticAttributes.HTTP_URL, location.href);
+          context.with(trace.setSpan(context.active(), fetchSpan), () => {
+            addSpanNetworkEvents(fetchSpan, entries);
+            this._endSpan(fetchSpan, PTN.RESPONSE_END, entries);
+          });
         }
-        context.with(trace.setSpan(context.active(), rootSpan), () => {
-          const fetchSpan = this._startSpan(
-            AttributeNames.DOCUMENT_FETCH,
-            PTN.FETCH_START,
-            entries
-          );
-          if (fetchSpan) {
-            fetchSpan.setAttribute(SemanticAttributes.HTTP_URL, location.href);
-            context.with(trace.setSpan(context.active(), fetchSpan), () => {
-              addSpanNetworkEvents(fetchSpan, entries);
-              this._endSpan(fetchSpan, PTN.RESPONSE_END, entries);
-            });
-          }
-        });
+      });
 
-        rootSpan.setAttribute(SemanticAttributes.HTTP_URL, location.href);
-        rootSpan.setAttribute(
-          SemanticAttributes.HTTP_USER_AGENT,
-          navigator.userAgent
-        );
+      rootSpan.setAttribute(SemanticAttributes.HTTP_URL, location.href);
+      rootSpan.setAttribute(
+        SemanticAttributes.HTTP_USER_AGENT,
+        navigator.userAgent
+      );
 
-        this._addResourcesSpans(rootSpan);
+      this._addResourcesSpans(rootSpan);
 
-        addSpanNetworkEvent(rootSpan, PTN.FETCH_START, entries);
-        addSpanNetworkEvent(rootSpan, PTN.UNLOAD_EVENT_START, entries);
-        addSpanNetworkEvent(rootSpan, PTN.UNLOAD_EVENT_END, entries);
-        addSpanNetworkEvent(rootSpan, PTN.DOM_INTERACTIVE, entries);
-        addSpanNetworkEvent(
-          rootSpan,
-          PTN.DOM_CONTENT_LOADED_EVENT_START,
-          entries
-        );
-        addSpanNetworkEvent(
-          rootSpan,
-          PTN.DOM_CONTENT_LOADED_EVENT_END,
-          entries
-        );
-        addSpanNetworkEvent(rootSpan, PTN.DOM_COMPLETE, entries);
-        addSpanNetworkEvent(rootSpan, PTN.LOAD_EVENT_START, entries);
-        addSpanNetworkEvent(rootSpan, PTN.LOAD_EVENT_END, entries);
+      addSpanNetworkEvent(rootSpan, PTN.FETCH_START, entries);
+      addSpanNetworkEvent(rootSpan, PTN.UNLOAD_EVENT_START, entries);
+      addSpanNetworkEvent(rootSpan, PTN.UNLOAD_EVENT_END, entries);
+      addSpanNetworkEvent(rootSpan, PTN.DOM_INTERACTIVE, entries);
+      addSpanNetworkEvent(
+        rootSpan,
+        PTN.DOM_CONTENT_LOADED_EVENT_START,
+        entries
+      );
+      addSpanNetworkEvent(rootSpan, PTN.DOM_CONTENT_LOADED_EVENT_END, entries);
+      addSpanNetworkEvent(rootSpan, PTN.DOM_COMPLETE, entries);
+      addSpanNetworkEvent(rootSpan, PTN.LOAD_EVENT_START, entries);
+      addSpanNetworkEvent(rootSpan, PTN.LOAD_EVENT_END, entries);
 
-        addSpanPerformancePaintEvents(rootSpan);
-        this._endSpan(rootSpan, PTN.LOAD_EVENT_END, entries);
-      }
-    );
+      addSpanPerformancePaintEvents(rootSpan);
+
+      this._endSpan(rootSpan, PTN.LOAD_EVENT_END, entries);
+    });
   }
 
   /**

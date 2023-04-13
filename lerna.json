@@ -12,7 +12,7 @@
   ],
   "version": "independent",
   "changelog": {
-    "repo": "open-telemetry/opentelemetry-js-contrib",
+    "repo": "paychex/opentelemetry-js-contrib",
     "labels": {
       "breaking": ":boom: Breaking Change",
       "bug": ":bug: (Bug Fix)",
